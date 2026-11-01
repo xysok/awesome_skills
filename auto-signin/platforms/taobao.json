@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "id": "taobao",
+  "name": "淘宝",
+  "startUrl": "https://huodong.taobao.com/wow/z/tbhome/pc-growth/tao-coin",
+  "allowedOrigins": [
+    "https://huodong.taobao.com",
+    "https://h5api.m.taobao.com",
+    "https://main.m.tmall.com",
+    "https://www.taobao.com",
+    "https://login.taobao.com"
+  ],
+  "allowedResourceOrigins": ["https://g.alicdn.com"],
+  "browser": {
+    "launchArgs": ["--no-proxy-server"]
+  },
+  "session": {
+    "validWhen": [
+      {
+        "kind": "text",
+        "matches": "立即签到",
+        "match": "equals",
+        "locator": [{ "by": "css", "value": "#step1" }]
+      },
+      {
+        "kind": "text",
+        "matches": "逛3个商品得",
+        "match": "includes",
+        "locator": [{ "by": "css", "value": "#step1" }]
+      }
+    ],
+    "invalidWhen": [
+      { "kind": "url", "matches": "https://login.taobao.com/", "match": "includes" },
+      { "kind": "url", "matches": "punish", "match": "includes" },
+      { "kind": "url", "matches": "captcha", "match": "includes" },
+      { "kind": "text", "matches": "亲，请登录", "match": "includes" }
+    ]
+  },
+  "login": {
+    "prepare": [
+      {"action":"navigate","url":"https://login.taobao.com/member/login.jhtml?f=top&redirectURL=https%3A%2F%2Fhuodong.taobao.com%2Fwow%2Fz%2Ftbhome%2Fpc-growth%2Ftao-coin"},
+      {"action":"wait","when":[{"kind":"visible","locator":[{"by":"css","value":"#fm-login-id"}]}]},
+      {"action":"check","locator":[{"by":"css","value":"#fm-agreement-checkbox"}]}
+    ],
+    "fields": [
+      {"env":"TAOBAO_USERNAME","locator":[{"by":"css","value":"#fm-login-id"}]},
+      {"env":"TAOBAO_PASSWORD","locator":[{"by":"css","value":"#fm-login-password"}]}
+    ],
+    "manualWhen": [{"kind":"text","matches":"Please slide to verify","match":"includes","locator":[{"by":"text","value":"Please slide to verify","exact":false}]}],
+    "submit":[{"by":"css","value":"button.password-login[type=submit]"}]
+  },
+  "signin": {
+    "action": [
+      { "by": "css", "value": "#step1:text-is(\"立即签到\")", "clickMode": "dom" }
+    ],
+    "alreadyWhen": [
+      {
+        "kind": "text",
+        "matches": "已领取",
+        "match": "includes",
+        "locator": [{ "by": "css", "value": ".gold-sign-wrapper .sign-signed.sign-item.sign_2" }]
+      }
+    ],
+    "successTimeoutSeconds": 5,
+    "successWhen": [
+      {
+        "kind": "text",
+        "matches": "已领取",
+        "match": "includes",
+        "locator": [{ "by": "css", "value": ".gold-sign-wrapper .sign-signed.sign-item.sign_2" }]
+      }
+    ],
+    "rewards": [
+      {
+        "id": "daily-coins",
+        "type": "coins",
+        "unit": "淘金币",
+        "sources": [
+          {
+            "id": "today-node",
+            "locator": [{ "by": "css", "value": ".gold-sign-wrapper .sign-signed.sign-item.sign_2" }],
+            "pattern": "已领取\\s*今天\\s*\\+\\s*(\\d+(?:\\.\\d+)?)",
+            "amountGroup": 1
+          }
+        ]
+      }
+    ]
+  }
+}

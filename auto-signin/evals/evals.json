@@ -1,0 +1,38 @@
+{
+  "skill_name": "auto-signin",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "请在无图形界面的服务器上为我执行已有平台的每日签到；如果 session 过期，要恢复登录并在需要验证码时提醒我。",
+      "expected_output": "Agent performs preflight, runs the headless CLI, requests only necessary user input, resumes, verifies positive evidence, saves session, and reports a structured outcome.",
+      "files": [],
+      "expectations": [
+        "Uses headless mode without requiring GUI or VNC",
+        "Does not claim success without configured positive evidence",
+        "Does not request passwords or persistent credentials in chat"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "新增一个签到网站。我会提供入口 URL、页面跳转规则和 F12 看到的按钮 HTML，其中签到按钮只有图片没有文字。",
+      "expected_output": "Agent scaffolds and validates a declarative platform adapter, uses stable image DOM metadata or selector fallbacks, and adds a fixture test without changing the engine unnecessarily.",
+      "files": [],
+      "expectations": [
+        "Keeps website-specific selectors in a platform adapter",
+        "Supports image-only controls without assuming visible text",
+        "Validates allowed origins and explicit success evidence"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "把这个自动签到放进无人值守的定时任务；网站偶尔会要求短信验证码。",
+      "expected_output": "Agent identifies that unattended execution cannot complete an interactive challenge, returns needs_input rather than looping or fabricating success, and recommends a notification-capable delivery target.",
+      "files": [],
+      "expectations": [
+        "Fails closed on interactive challenges in unattended mode",
+        "Returns a resumable run identifier and expiry",
+        "Distinguishes notification delivery from successful signin"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "id": "wps",
+  "name": "WPS",
+  "startUrl": "https://personal-act.wps.cn/rubik2/portal/HD2025031821201822/YM2025041617143388",
+  "allowedOrigins": [
+    "https://personal-act.wps.cn",
+    "https://account.wps.cn"
+  ],
+  "allowedResourceOrigins": [
+    "https://gcaptcha4.geetest.com", "https://gcaptcha4.geevisit.com", "https://gcaptcha4.gsensebot.com",
+    "https://static.geetest.com", "https://static.geevisit.com"
+  ],
+  "browser": {
+    "launchArgs": ["--no-proxy-server"]
+  },
+  "session": {
+    "validWhen": [
+      {
+        "kind": "visible",
+        "locator": [{ "by": "css", "value": "button.logout" }]
+      }
+    ],
+    "invalidWhen": [
+      {
+        "kind": "text",
+        "matches": "请登录",
+        "match": "equals",
+        "locator": [{ "by": "css", "value": "button.username" }]
+      },
+      {
+        "kind": "url",
+        "matches": "https://account.wps.cn/",
+        "match": "includes"
+      }
+    ]
+  },
+  "login": {
+    "prepare": [
+      {"action":"navigate","url":"https://account.wps.cn/?cb=https%3A%2F%2Fpersonal-act.wps.cn%2Frubik2%2Fportal%2FHD2025031821201822%2FYM2025041617143388&qrcode=wps"},
+      {"action":"wait","when":[{"kind":"visible","locator":[{"by":"css","value":"#loginProtocal"}]}]},
+      {"action":"check","locator":[{"by":"css","value":"#loginProtocal"}]},
+      {"action":"click","locator":[{"by":"css","value":"a.more"}]},
+      {"action":"click","locator":[{"by":"css","value":"#account"}]},
+      {"action":"wait","when":[{"kind":"visible","locator":[{"by":"css","value":"#email","frame":"iframe.account_frame.js_account_frame"}]}]}
+    ],
+    "fields": [
+      {"env":"WPS_USERNAME","locator":[{"by":"css","value":"#email","frame":"iframe.account_frame.js_account_frame"}]},
+      {"env":"WPS_PASSWORD","locator":[{"by":"css","value":"#password","frame":"iframe.account_frame.js_account_frame"}]}
+    ],
+    "manualWhen": [{"kind":"text","matches":"Slide to complete the puzzle","match":"includes","locator":[{"by":"text","value":"Slide to complete the puzzle","exact":false,"frame":"iframe.account_frame.js_account_frame"}]}],
+    "submit":[{"by":"css","value":"a#login","frame":"iframe.account_frame.js_account_frame"}]
+  },
+  "signin": {
+    "action": [
+      {
+        "by": "css",
+        "value": ".sign-opera-btn:has-text(\"点击签到\")",
+        "clickMode": "dom"
+      }
+    ],
+    "alreadyWhen": [
+      {
+        "kind": "text",
+        "matches": "已签到",
+        "match": "equals",
+        "locator": [{ "by": "css", "value": ".sign-opera-btn" }]
+      }
+    ],
+    "successTimeoutSeconds": 5,
+    "successWhen": [
+      {
+        "kind": "text",
+        "matches": "已签到",
+        "match": "equals",
+        "locator": [{ "by": "css", "value": ".sign-opera-btn" }]
+      }
+    ],
+    "rewards": [
+      {
+        "id": "daily-points",
+        "type": "points",
+        "unit": "积分",
+        "sources": [
+          {
+            "id": "today-node",
+            "locator": [
+              {
+                "by": "css",
+                "value": ".sign-in-panel__main .flex.flex-col.items-center.relative:has-text(\"今日\") > .record-item-reward-text"
+              }
+            ],
+            "pattern": "积分\\s*\\+\\s*(\\d+(?:\\.\\d+)?)",
+            "amountGroup": 1
+          }
+        ]
+      }
+    ]
+  }
+}

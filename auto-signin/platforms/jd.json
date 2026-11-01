@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "id": "jd",
+  "name": "京东",
+  "startUrl": "https://bean.jd.com/myJingBean/list",
+  "allowedOrigins": [
+    "https://bean.jd.com",
+    "https://passport.jd.com"
+  ],
+  "allowedResourceOrigins": [
+    "https://api.m.jd.com", "https://cactus.jd.com", "https://jcap.m.jd.com",
+    "https://seq.jd.com", "https://storage.jd.com"
+  ],
+  "browser": {
+    "launchArgs": ["--no-proxy-server"]
+  },
+  "session": {
+    "validWhen": [
+      {
+        "kind": "visible",
+        "locator": [{ "by": "css", "value": "#bean-sign-component" }]
+      }
+    ],
+    "invalidWhen": [
+      { "kind": "url", "matches": "/new/login.aspx", "match": "includes" }
+    ]
+  },
+  "login": {
+    "prepare": [
+      {"action":"navigate","url":"https://passport.jd.com/new/login.aspx?ReturnUrl=https%3A%2F%2Fbean.jd.com%2FmyJingBean%2Flist"},
+      {"action":"click","locator":[{"by":"css","value":".form-login-type:has-text(\"密码登录\")"}]},
+      {"action":"wait","when":[{"kind":"visible","locator":[{"by":"css","value":"#loginname"}]}]}
+    ],
+    "fields": [
+      {"env":"JD_USERNAME","locator":[{"by":"css","value":"#loginname"}]},
+      {"env":"JD_PASSWORD","locator":[{"by":"css","value":"#nloginpwd"}]}
+    ],
+    "manualWhen": [{"kind":"text","matches":"请拖动滑块完成上方拼图","match":"includes","locator":[{"by":"text","value":"请拖动滑块完成上方拼图","exact":false}]}],
+    "submit":[{"by":"css","value":"a#loginsubmit"}]
+  },
+  "signin": {
+    "action": [
+      { "by": "css", "value": "#bean-sign-component .btn" }
+    ],
+    "alreadyWhen": [
+      {
+        "kind": "visible",
+        "locator": [
+          {
+            "by": "css",
+            "value": "#bean-sign-component:has(.node.sign-in):not(:has(.node.continuity-no-sign))"
+          }
+        ]
+      }
+    ],
+    "successTimeoutSeconds": 5,
+    "successWhen": [
+      {
+        "kind": "text",
+        "matches": "签到成功，恭喜获得京豆",
+        "match": "includes",
+        "locator": [{ "by": "css", "value": "#bean-sign-component" }]
+      },
+      {
+        "kind": "visible",
+        "locator": [
+          {
+            "by": "css",
+            "value": "#bean-sign-component:has(.node.sign-in):not(:has(.node.continuity-no-sign))"
+          }
+        ]
+      }
+    ],
+    "rewards": [
+      {
+        "id": "daily-beans",
+        "type": "points",
+        "unit": "京豆",
+        "sources": [
+          {
+            "id": "success-popup",
+            "locator": [{ "by": "css", "value": "#bean-sign-component" }],
+            "pattern": "签到成功，?恭喜获得京豆\\s*\\+\\s*(\\d+(?:\\.\\d+)?)",
+            "amountGroup": 1
+          },
+          {
+            "id": "daily-ledger",
+            "locator": [{ "by": "css", "value": ".mybean-table tbody tr:has(td:first-child:text-is(\"活动奖励京豆\"))", "index": 0 }],
+            "pattern": "活动奖励京豆\\s+(\\d{4}-\\d{2}-\\d{2})\\s+\\d{2}:\\d{2}:\\d{2}\\s+\\+(\\d+(?:\\.\\d+)?)",
+            "todayGroup": 1,
+            "amountGroup": 2
+          }
+        ]
+      }
+    ]
+  }
+}

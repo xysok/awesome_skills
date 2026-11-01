@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "id": "cordcloud",
+  "name": "CordCloud",
+  "startUrl": "https://www.cordcloud.us/user",
+  "allowedOrigins": ["https://www.cordcloud.us"],
+  "browser": {
+    "ignoreDefaultArgs": ["--enable-unsafe-swiftshader"],
+    "launchArgs": ["--no-proxy-server", "--disable-blink-features=AutomationControlled"],
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "hideAutomation": true
+  },
+  "session": {
+    "validWhen": [
+      { "kind": "visible", "locator": [{ "by": "text", "value": "签到", "exact": false }] }
+    ],
+    "invalidWhen": [
+      { "kind": "url", "matches": "/auth/login", "match": "includes" }
+    ]
+  },
+  "login": {
+    "prepare": [{"action":"check","locator":[{"by":"css","value":"#remember_me"}]}],
+    "fields": [
+      { "env": "CORDCLOUD_EMAIL", "locator": [{ "by": "css", "value": "input#email" }, { "by": "css", "value": "input[type=email]" }] },
+      { "env": "CORDCLOUD_PASSWORD", "locator": [{ "by": "css", "value": "input#passwd" }, { "by": "css", "value": "input[type=password]" }] }
+    ],
+    "captcha": {
+      "readyWhen": [{ "kind": "class", "locator": [{ "by": "css", "value": "#cap-container" }], "has": "cap-verified" }],
+      "failureWhen": [{ "kind": "text", "matches": "验证失败", "match": "includes" }],
+      "timeoutSeconds": 30,
+      "maxAttempts": 2,
+      "captureScreenshot": true
+    },
+    "submit": [{ "by": "css", "value": "button#login" }],
+    "challenges": [
+      {
+        "id": "email-2fa",
+        "type": "otp",
+        "prompt": "请输入邮箱收到的 CordCloud 2FA 验证码（10 分钟内有效），然后回车。",
+        "when": [{ "kind": "url", "matches": "/auth/login/2fa", "match": "includes" }],
+        "input": [
+          { "by": "css", "value": "input#code" },
+          { "by": "css", "value": "input[name=code]" },
+          { "by": "css", "value": "input[autocomplete=one-time-code]" }
+        ],
+        "submit": [{ "by": "css", "value": "button#btn-verify" }, { "by": "css", "value": "button[type=submit]" }],
+        "resume": { "mode": "inline" }
+      }
+    ]
+  },
+  "signin": {
+    "actionDelaySeconds": 2,
+    "action": [
+      { "by": "role", "role": "button", "name": "签到", "exact": false },
+      { "by": "role", "role": "link", "name": "签到", "exact": false }
+    ],
+    "alreadyWhen": [{ "kind": "visible", "locator": [{ "by": "text", "value": "已签到", "exact": false }] }],
+    "successWhen": [
+      { "kind": "visible", "locator": [{ "by": "text", "value": "已签到", "exact": false }] },
+      { "kind": "visible", "locator": [{ "by": "text", "value": "签到成功", "exact": false }] }
+    ],
+    "rewards": [
+      {
+        "id": "daily-traffic",
+        "type": "traffic",
+        "sources": [
+          {
+            "id": "checkin-message",
+            "locator": [{ "by": "css", "value": "#checkin-msg" }],
+            "pattern": "(\\d+(?:\\.\\d+)?)\\s*(GB|MB|TB)",
+            "amountGroup": 1,
+            "unitGroup": 2,
+            "caseInsensitive": true
+          },
+          {
+            "id": "success-dialog",
+            "locator": [{ "by": "css", "value": "#msg" }],
+            "pattern": "(\\d+(?:\\.\\d+)?)\\s*(GB|MB|TB)",
+            "amountGroup": 1,
+            "unitGroup": 2,
+            "caseInsensitive": true
+          }
+        ]
+      }
+    ]
+  }
+}

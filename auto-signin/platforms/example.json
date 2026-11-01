@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "id": "example",
+  "name": "Example platform",
+  "startUrl": "https://example.invalid/account",
+  "allowedOrigins": ["https://example.invalid"],
+  "session": {
+    "validWhen": [
+      { "kind": "visible", "locator": [{ "by": "css", "value": "[data-user-account]" }] }
+    ],
+    "invalidWhen": [
+      { "kind": "url", "matches": "/login", "match": "includes" }
+    ]
+  },
+  "login": {
+    "fields": [
+      { "env": "EXAMPLE_USERNAME", "locator": [{ "by": "label", "value": "Email" }, { "by": "css", "value": "input[name=email]" }] },
+      { "env": "EXAMPLE_PASSWORD", "locator": [{ "by": "label", "value": "Password" }, { "by": "css", "value": "input[type=password]" }] }
+    ],
+    "submit": [{ "by": "role", "role": "button", "name": "Log in" }],
+    "challenges": [
+      {
+        "id": "otp",
+        "type": "otp",
+        "prompt": "请提供本次登录的一次性验证码。",
+        "when": [{ "kind": "url", "matches": "/verify", "match": "includes" }],
+        "input": [{ "by": "css", "value": "input[autocomplete=one-time-code]" }],
+        "submit": [{ "by": "role", "role": "button", "name": "Verify" }],
+        "resume": { "mode": "reload" },
+        "captureScreenshot": true,
+        "ttlSeconds": 600
+      }
+    ]
+  },
+  "signin": {
+    "action": [
+      { "by": "role", "role": "button", "name": "签到" },
+      { "by": "image", "srcIncludes": "checkin" }
+    ],
+    "alreadyWhen": [{ "kind": "text", "matches": "今日已签到", "match": "equals", "locator": [{ "by": "css", "value": "[data-checkin-status]" }] }],
+    "successWhen": [{ "kind": "text", "matches": "签到成功", "match": "equals", "locator": [{ "by": "css", "value": "[data-checkin-status]" }] }, { "kind": "text", "matches": "今日已签到", "match": "equals", "locator": [{ "by": "css", "value": "[data-checkin-status]" }] }]
+  }
+}

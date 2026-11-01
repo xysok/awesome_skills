@@ -147,3 +147,15 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# Private skill runtime data (never publish)
+__pycache__/
+*.pyc
+output/
+state/
+sessions/
+checkpoints/
+artifacts/
+credentials.json
+vault-bindings.json
+*.session
