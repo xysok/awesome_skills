@@ -1,6 +1,6 @@
 # Awesome Skills
 
-四个独立技能目录，包含技能说明、运行源码及必要的配置模板或测试。
+八个独立技能目录，包含技能说明，以及适用的运行源码、配置模板或测试。
 
 | 目录 | 用途 |
 |---|---|
@@ -8,6 +8,16 @@
 | [lark-workflow-weekly-report](lark-workflow-weekly-report/) | 汇总本周合格日报，生成周报与下周推进重点 |
 | [lark-workflow-monthly-report](lark-workflow-monthly-report/) | 汇总本月合格日报，生成月报与下月推进重点 |
 | [auto-signin](auto-signin/) | CordCloud、京东、淘宝、WPS 签到执行器、验证与定时报表入口 |
+| [gf_etf_super_fund](gf_etf_super_fund/) | 查询 ETF 超级资金异动及近 14 日资金明细 |
+| [gf_lhb_list](gf_lhb_list/) | 查询指定交易日上海、深圳市场龙虎榜个股 |
+| [gf_stock_f10](gf_stock_f10/) | 查询个股公司资料、主营业务与所属行业 |
+| [gf_stock_valuation](gf_stock_valuation/) | 对比股票市值、估值和核心财务指标 |
+
+## 广发证券数据技能
+
+四个 `gf_*` 目录各自包含独立 `SKILL.md`，提供 curl 与 Python 标准库调用示例。使用前自行通过安全机制配置 `GF_SKILLS_APIKEY`；安装技能不会自动配置 API Key。仓库不包含真实 Key、账户信息或查询结果。
+
+发布副本修复了 ETF 示例被截断的环境变量读取与请求头，以及 F10 示例被截断的环境变量名。示例经过 Python/Bash 语法检查与离线请求构造验证；本次发布未调用广发真实数据接口，因此不代表已验证接口当前可用性、返回字段或数据授权范围。数据服务的使用与再分发须遵守提供方条款。
 
 ## 飞书报告
 
