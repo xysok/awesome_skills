@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { resolveStateDir } from './lib/cli.mjs';
 
 const SKILL_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -17,7 +18,7 @@ const PLATFORM_NAMES = {
 const REAL_PLATFORMS = Object.entries(PLATFORM_NAMES).map(([id, name]) => ({ id, name }));
 const SAFE_CHILD_ENV = new Set([
   'HOME', 'HERMES_HOME', 'LANG', 'LC_ALL', 'PATH', 'TEMP', 'TMP', 'TMPDIR', 'TZ',
-  'USERPROFILE', 'XDG_RUNTIME_DIR', 'DISPLAY'
+  'USERPROFILE', 'XDG_RUNTIME_DIR', 'DISPLAY', 'XAUTHORITY'
 ]);
 
 function safeCell(value) {
@@ -32,26 +33,7 @@ function rewardFrom(result) {
         typeof reward.unit === 'string' && reward.unit.trim() !== '')
       .map((reward) => `+${reward.amount} ${reward.unit.trim()}`)
     : [];
-  if (structured.length > 0) return structured.join('、');
-
-  const text = `${result.evidence ?? ''} ${result.message ?? ''}`;
-  const patterns = {
-    cordcloud: [
-      { regex: /(?:\+|获得|奖励)\s*(\d+(?:\.\d+)?)\s*(GB|MB|TB)/i, unitGroup: 2 }
-    ],
-    jd: [
-      { regex: /京豆\s*\+\s*(\d+(?:\.\d+)?)/, unit: '京豆' },
-      { regex: /\+\s*(\d+(?:\.\d+)?)\s*京豆/, unit: '京豆' }
-    ],
-    taobao: [
-      { regex: /\+\s*(\d+(?:\.\d+)?)\s*(?:淘金币|金币)?/, unit: '淘金币' }
-    ]
-  }[result.platform] ?? [];
-  for (const pattern of patterns) {
-    const match = text.match(pattern.regex);
-    if (match) return `+${match[1]} ${pattern.unit ?? match[pattern.unitGroup]}`;
-  }
-  return null;
+  return structured.length > 0 ? structured.join('、') : null;
 }
 
 function noteFor(result) {
@@ -132,7 +114,7 @@ export function resolveExecutionTimeoutMs(platform, options = {}) {
 
 export async function executePlatform(platform, options = {}) {
   const cliPath = options.cliPath ?? resolve(SKILL_ROOT, 'scripts', 'auto-signin.mjs');
-  const stateDir = options.stateDir ?? '/opt/data/home/.local/state/auto-signin';
+  const stateDir = resolve(options.stateDir ?? resolveStateDir(options.baseEnv ?? process.env));
   const credentialsPath = options.credentialsPath ?? resolve(stateDir, 'credentials.json');
   const timeoutMs = resolveExecutionTimeoutMs(platform, options);
   const killGraceMs = options.killGraceMs ?? 2_000;
@@ -141,13 +123,17 @@ export async function executePlatform(platform, options = {}) {
   const safeEnvironment = Object.fromEntries(
     Object.entries(baseEnv).filter(([key, value]) => SAFE_CHILD_ENV.has(key) && typeof value === 'string')
   );
-  const credentials = await platformCredentials(platform.id, credentialsPath);
+  const sessionOnly = options.probeOnly || (options.sessionOnly ?? baseEnv.AUTO_SIGNIN_SESSION_ONLY === '1');
+  if (options.vaultHandle !== undefined) throw new Error('Per-call vault account override is not supported');
+  const credentials = sessionOnly ? {} : await platformCredentials(platform.id, credentialsPath);
   let bindings = {};
-  try { bindings = JSON.parse(await readFile(resolve(stateDir, 'vault-bindings.json'), 'utf8')); }
-  catch (error) { if (error?.code !== 'ENOENT') throw new Error('Invalid vault binding configuration'); }
+  if (!sessionOnly) {
+    try { bindings = JSON.parse(await readFile(resolve(stateDir, 'vault-bindings.json'), 'utf8')); }
+    catch (error) { if (error?.code !== 'ENOENT') throw new Error('Invalid vault binding configuration'); }
+  }
   const binding = bindings[platform.id];
-  const args = [cliPath, 'run', '--platform', platform.id, '--state-dir', stateDir,
-    ...(platform.id === 'cordcloud' ? ['--headed'] : [])];
+  const args = [cliPath, options.probeOnly ? 'probe' : 'run', '--platform', platform.id, '--state-dir', stateDir,
+    ...((options.headed ?? true) ? ['--headed'] : []), ...(sessionOnly && !options.probeOnly ? ['--session-only'] : [])];
   const executable = binding ? (options.vaultPython ?? '/opt/hermes/.venv/bin/python') : process.execPath;
   const launchArgs = binding ? [
     options.vaultLauncher ?? resolve(SKILL_ROOT, 'scripts', 'vault-launcher.py'),
@@ -158,7 +144,7 @@ export async function executePlatform(platform, options = {}) {
   return new Promise((resolveResult, reject) => {
     const child = spawn(executable, launchArgs, {
       cwd: SKILL_ROOT,
-      env: { ...safeEnvironment, ...credentials, AUTO_SIGNIN_BROWSER_PATH: browserPath,
+      env: { ...safeEnvironment, ...credentials, AUTO_SIGNIN_BROWSER_PATH: browserPath, AUTO_SIGNIN_NONINTERACTIVE: '1',
         ...(options.loginDiagnostics ? {AUTO_SIGNIN_LOGIN_DIAGNOSTICS: '1'} : {}) },
       stdio: ['pipe', 'pipe', 'pipe']
     });
@@ -192,7 +178,11 @@ export async function executePlatform(platform, options = {}) {
         return;
       }
       try {
-        resolveResult(JSON.parse(stdout.trim()));
+        const result = JSON.parse(stdout.trim());
+        if (result.code === 'missing_secret' && !binding) {
+          result.message = `${result.message ?? 'Required login credentials are incomplete.'} No vault binding is configured for this run. This does not mean the vault item is missing; list the current-profile vault and select an approved exact-origin login.`;
+        }
+        resolveResult(result);
       } catch {
         const detail = stderr.trim() || `child exited with code ${code}`;
         reject(new Error(`invalid auto-signin output: ${detail}`));
@@ -217,7 +207,8 @@ function shanghaiTimestamp(now = new Date()) {
 }
 
 export async function buildDailyReport(options = {}) {
-  const results = await runAll(REAL_PLATFORMS, options.execute ?? executePlatform);
+  const execute = options.execute ?? executePlatform;
+  const results = await runAll(REAL_PLATFORMS, (platform) => execute(platform, { sessionOnly: true }));
   return formatReport(results, options.timestamp ?? shanghaiTimestamp());
 }
 

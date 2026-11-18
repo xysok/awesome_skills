@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtemp, stat } from 'node:fs/promises';
+import { mkdtemp, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -18,6 +18,7 @@ function body(request) {
 }
 
 async function startFixture() {
+  let signinPosts = 0;
   const server = createServer(async (request, response) => {
     const cookies = request.headers.cookie ?? '';
     if (request.method === 'POST' && request.url === '/login') {
@@ -39,6 +40,7 @@ async function startFixture() {
       return;
     }
     if (request.method === 'POST' && request.url === '/signin') {
+      signinPosts += 1;
       if (!cookies.includes('auth=1')) {
         response.writeHead(302, { location: '/login' }).end();
         return;
@@ -79,6 +81,7 @@ async function startFixture() {
   const address = server.address();
   return {
     origin: `http://127.0.0.1:${address.port}`,
+    signinPosts: () => signinPosts,
     close: () => new Promise((resolve) => server.close(resolve))
   };
 }
@@ -140,11 +143,43 @@ test('recovers an expired session through OTP and persists the headless session'
     assert.equal(resumed.evidence, 'Already signed today');
     await assert.rejects(stat(first.challenge.screenshotPath), /ENOENT/);
 
-    const repeated = await runSignin(platform(fixture.origin), { store, env: {} });
+    const probe = await runSignin(platform(fixture.origin), { store: new StateStore(root), probeOnly: true, env: {} });
+    assert.equal(probe.status, 'valid');
+    assert.equal(probe.checkin, 'already_done');
+    const repeated = await runSignin(platform(fixture.origin), { store: new StateStore(root), sessionOnly: true, env: {} });
     assert.equal(repeated.status, 'already_done');
   } finally {
     await fixture.close();
   }
+});
+
+test('read-only probe does not click sign-in or write back the saved session', async () => {
+  const fixture = await startFixture();
+  const store = new StateStore(await mkdtemp(join(tmpdir(), 'auto-signin-probe-')));
+  const target = platform(fixture.origin);
+  try {
+    const missing = await runSignin(target, { store, probeOnly: true });
+    assert.equal(missing.code, 'session_missing');
+    await store.saveSession(target.id, { cookies: [], origins: [] });
+    for (const mode of [{ probeOnly: true }, { sessionOnly: true }]) {
+      const expired = await runSignin(target, { store, ...mode, env: {} });
+      assert.equal(expired.status, 'needs_input');
+      assert.equal(expired.code, 'session_expired');
+    }
+    const state = { cookies: [{name:'auth', value:'1', domain:'127.0.0.1', path:'/', expires:-1, httpOnly:true, secure:false, sameSite:'Lax'}], origins: [] };
+    await store.saveSession(target.id, state);
+    const invalidCheckpoint = join(store.checkpointsDir, 'invalid.json');
+    await writeFile(invalidCheckpoint, '{}', { mode: 0o600 });
+    const probe = await runSignin(target, { store, probeOnly: true });
+    assert.equal(probe.status, 'valid');
+    assert.equal(probe.checkin, 'unverified');
+    assert.deepEqual(await store.loadSession(target.id), state);
+    assert.ok((await stat(invalidCheckpoint)).isFile());
+    assert.equal(fixture.signinPosts(), 0);
+    const signed = await runSignin(target, { store, sessionOnly: true, env: {} });
+    assert.equal(signed.status, 'success', JSON.stringify(signed));
+    assert.equal(fixture.signinPosts(), 1);
+  } finally { await fixture.close(); }
 });
 
 test('waits for delayed session evidence before classifying the page', async () => {
@@ -381,11 +416,11 @@ test('reports actual headed metadata and strips credential variables from browse
     store: new StateStore(root),
     browserType,
     headless: false,
-    browserEnvSource: { PATH: '/bin', DEMO_PASS: 'secret', API_TOKEN: 'secret' }
+    browserEnvSource: { PATH: '/bin', XAUTHORITY: '/fixture/Xauthority', DEMO_PASS: 'secret', API_TOKEN: 'secret' }
   });
 
   assert.equal(result.headless, false);
-  assert.deepEqual(launchOptions.env, { PATH: '/bin' });
+  assert.deepEqual(launchOptions.env, { PATH: '/bin', XAUTHORITY: '/fixture/Xauthority' });
 });
 
 test('does not exfiltrate a challenge answer to an off-origin subresource during resume', async () => {

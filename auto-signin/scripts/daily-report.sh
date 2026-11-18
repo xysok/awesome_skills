@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
 set -u
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-exec node "$SCRIPT_DIR/run-all.mjs"
+exec bash "$(dirname "${BASH_SOURCE[0]}")/auto-signin-daily-report.sh" "$@"
