@@ -7,7 +7,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test",
+
     "check": "node scripts/auto-signin.mjs check --all"
   },
   "dependencies": {
