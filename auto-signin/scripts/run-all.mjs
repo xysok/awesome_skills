@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { fileURLToPath } from 'node:url';
@@ -80,26 +80,6 @@ export async function runAll(platforms, execute) {
   return results;
 }
 
-async function platformCredentials(platformId, path) {
-  let document;
-  try {
-    document = JSON.parse(await readFile(path, 'utf8'));
-  } catch (error) {
-    if (error?.code === 'ENOENT') return {};
-    throw new Error(`credentials file is invalid: ${error.message}`);
-  }
-  const selected = document?.[platformId];
-  if (selected === undefined) return {};
-  if (!selected || typeof selected !== 'object' || Array.isArray(selected)) {
-    throw new Error(`credentials for ${platformId} must be an object`);
-  }
-  for (const [key, value] of Object.entries(selected)) {
-    if (!/^[A-Z][A-Z0-9_]*$/.test(key) || typeof value !== 'string' || value.length === 0) {
-      throw new Error(`credentials for ${platformId} contain an invalid entry`);
-    }
-  }
-  return selected;
-}
 
 export function resolveBrowserPath(options = {}) {
   const baseEnv = options.baseEnv ?? process.env;
@@ -115,7 +95,7 @@ export function resolveExecutionTimeoutMs(platform, options = {}) {
 export async function executePlatform(platform, options = {}) {
   const cliPath = options.cliPath ?? resolve(SKILL_ROOT, 'scripts', 'auto-signin.mjs');
   const stateDir = resolve(options.stateDir ?? resolveStateDir(options.baseEnv ?? process.env));
-  const credentialsPath = options.credentialsPath ?? resolve(stateDir, 'credentials.json');
+
   const timeoutMs = resolveExecutionTimeoutMs(platform, options);
   const killGraceMs = options.killGraceMs ?? 2_000;
   const baseEnv = options.baseEnv ?? process.env;
@@ -123,28 +103,14 @@ export async function executePlatform(platform, options = {}) {
   const safeEnvironment = Object.fromEntries(
     Object.entries(baseEnv).filter(([key, value]) => SAFE_CHILD_ENV.has(key) && typeof value === 'string')
   );
-  const sessionOnly = options.probeOnly || (options.sessionOnly ?? baseEnv.AUTO_SIGNIN_SESSION_ONLY === '1');
   if (options.vaultHandle !== undefined) throw new Error('Per-call vault account override is not supported');
-  const credentials = sessionOnly ? {} : await platformCredentials(platform.id, credentialsPath);
-  let bindings = {};
-  if (!sessionOnly) {
-    try { bindings = JSON.parse(await readFile(resolve(stateDir, 'vault-bindings.json'), 'utf8')); }
-    catch (error) { if (error?.code !== 'ENOENT') throw new Error('Invalid vault binding configuration'); }
-  }
-  const binding = bindings[platform.id];
   const args = [cliPath, options.probeOnly ? 'probe' : 'run', '--platform', platform.id, '--state-dir', stateDir,
-    ...((options.headed ?? true) ? ['--headed'] : []), ...(sessionOnly && !options.probeOnly ? ['--session-only'] : [])];
-  const executable = binding ? (options.vaultPython ?? '/opt/hermes/.venv/bin/python') : process.execPath;
-  const launchArgs = binding ? [
-    options.vaultLauncher ?? resolve(SKILL_ROOT, 'scripts', 'vault-launcher.py'),
-    '--handle', binding.handle, '--platform', platform.id,
-    '--', process.execPath, ...args
-  ] : args;
+    ...((options.headed ?? true) ? ['--headed'] : []), ...(!options.probeOnly ? ['--session-only'] : [])];
 
   return new Promise((resolveResult, reject) => {
-    const child = spawn(executable, launchArgs, {
+    const child = spawn(process.execPath, args, {
       cwd: SKILL_ROOT,
-      env: { ...safeEnvironment, ...credentials, AUTO_SIGNIN_BROWSER_PATH: browserPath, AUTO_SIGNIN_NONINTERACTIVE: '1',
+      env: { ...safeEnvironment, AUTO_SIGNIN_BROWSER_PATH: browserPath, AUTO_SIGNIN_NONINTERACTIVE: '1',
         ...(options.loginDiagnostics ? {AUTO_SIGNIN_LOGIN_DIAGNOSTICS: '1'} : {}) },
       stdio: ['pipe', 'pipe', 'pipe']
     });
@@ -178,11 +144,7 @@ export async function executePlatform(platform, options = {}) {
         return;
       }
       try {
-        const result = JSON.parse(stdout.trim());
-        if (result.code === 'missing_secret' && !binding) {
-          result.message = `${result.message ?? 'Required login credentials are incomplete.'} No vault binding is configured for this run. This does not mean the vault item is missing; list the current-profile vault and select an approved exact-origin login.`;
-        }
-        resolveResult(result);
+        resolveResult(JSON.parse(stdout.trim()));
       } catch {
         const detail = stderr.trim() || `child exited with code ${code}`;
         reject(new Error(`invalid auto-signin output: ${detail}`));
