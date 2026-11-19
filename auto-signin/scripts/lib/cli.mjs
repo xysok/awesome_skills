@@ -16,11 +16,11 @@ function takeValue(argv, index, option) {
 
 export function parseArgs(argv) {
   const command = argv[0];
-  if (!['run', 'resume', 'check', 'help'].includes(command)) {
+  if (!['run', 'probe', 'resume', 'check', 'help'].includes(command)) {
     throw new Error(`unknown command: ${command ?? '(missing)'}`);
   }
   const parsed = { command };
-  if (command === 'run' || command === 'resume') parsed.headless = true;
+  if (['run', 'probe', 'resume'].includes(command)) parsed.headless = true;
 
   for (let index = 1; index < argv.length; index += 1) {
     const option = argv[index];
@@ -40,6 +40,10 @@ export function parseArgs(argv) {
       case '--headed':
         parsed.headless = false;
         break;
+      case '--session-only':
+        if (command !== 'run') throw new Error('--session-only requires run');
+        parsed.sessionOnly = true;
+        break;
       case '--all':
         parsed.all = true;
         break;
@@ -48,7 +52,7 @@ export function parseArgs(argv) {
     }
   }
 
-  if (['run', 'resume'].includes(command) && !parsed.platform) {
+  if (['run', 'probe', 'resume'].includes(command) && !parsed.platform) {
     throw new Error('--platform is required');
   }
   if (command === 'resume' && !parsed.runId) throw new Error('--run-id is required');

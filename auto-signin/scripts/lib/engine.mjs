@@ -8,7 +8,7 @@ import { withRetry } from './retry.mjs';
 
 const SAFE_BROWSER_ENV = new Set([
   'DISPLAY', 'HOME', 'LANG', 'LC_ALL', 'LOCALAPPDATA', 'PATH', 'SystemRoot',
-  'TEMP', 'TMP', 'TMPDIR', 'TZ', 'USERPROFILE', 'WAYLAND_DISPLAY', 'XDG_RUNTIME_DIR'
+  'TEMP', 'TMP', 'TMPDIR', 'TZ', 'USERPROFILE', 'WAYLAND_DISPLAY', 'XDG_RUNTIME_DIR', 'XAUTHORITY'
 ]);
 
 function headlessValue(options) {
@@ -167,10 +167,13 @@ async function openBrowser(platform, storageState, options, operation) {
     ...(options.executablePath ? { executablePath: options.executablePath } : {})
   };
   const browser = await browserType.launch(launchOptions);
+  let context;
+  let closing = false;
   try {
-    const context = await browser.newContext({
+    context = await browser.newContext({
       ...(storageState ? { storageState } : {}),
       ...(platform.browser?.userAgent ? { userAgent: platform.browser.userAgent } : {}),
+      serviceWorkers: 'block',
       viewport: { width: 1280, height: 900 }
     });
     if (platform.browser?.hideAutomation) {
@@ -182,11 +185,66 @@ async function openBrowser(platform, storageState, options, operation) {
     let protectedSecrets = false;
     const blockedResourceOrigins = new Set();
     let blockedOrigin;
-    await context.route('**/*', async (route) => {
+    let blockedRedirect = false;
+    let initialNavigationUrl;
+    let initialRedirectUrl;
+    let protectedRedirects = 0;
+    let navigationRequestFailed = false;
+    const handleRoute = async (route) => {
       const request = route.request();
       const origin = new URL(request.url()).origin;
-      if (isAllowedProtectedRequest(platform, origin, request.isNavigationRequest())) {
-        await route.continue();
+      if (isAllowedProtectedRequest(platform, origin, request.isNavigationRequest()) ||
+          (!request.isNavigationRequest() && !protectedSecrets)) {
+        // route.continue() lets Chromium follow redirects without another route callback.
+        // Inspect each response before returning it to Chromium; never auto-follow here.
+        const response = await route.fetch({ maxRedirects: 0 });
+        const location = response.headers()['location'];
+        if (response.status() >= 300 && response.status() < 400 && location) {
+          // Only the explicitly requested initial GET may be restarted as a new,
+          // independently routed navigation. Never replay a credential-bearing POST.
+          if (!protectedSecrets && request.isNavigationRequest() && request.method() === 'GET' &&
+              request.frame() === page.mainFrame() && request.url() === initialNavigationUrl) {
+            let target;
+            try {
+              target = new URL(location, request.url());
+            } catch { /* invalid locations remain blocked */ }
+            if (target && platform.allowedOrigins.includes(target.origin) && !target.username && !target.password) {
+              initialRedirectUrl = target.href;
+              // Complete this hop without exposing the redirect to Chromium;
+              // the next page.goto is routed and checked independently.
+              await route.fulfill({ status: 200, contentType: 'text/html', body: '' });
+              return;
+            }
+          }
+          // 301/302 POST and 303 responses become GETs. Restart those GETs
+          // separately so the browser cannot automatically follow unchecked hops.
+          if (protectedSecrets && request.isNavigationRequest() && request.frame() === page.mainFrame() &&
+              [301, 302, 303].includes(response.status()) && ['GET', 'POST'].includes(request.method())) {
+            let target;
+            try { target = new URL(location, request.url()); } catch { /* invalid locations remain blocked */ }
+            if (target && target.origin === origin && platform.allowedOrigins.includes(target.origin) &&
+                !target.username && !target.password && protectedRedirects < 10) {
+              protectedRedirects += 1;
+              const destination = JSON.stringify(target.href).replace(/[<>&\u2028\u2029]/g,
+                char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
+              await route.fulfill({ status: 200, contentType: 'text/html',
+                headers: { 'content-security-policy': "default-src 'none'; script-src 'unsafe-inline'", 'cache-control': 'no-store' },
+                body: `<script>location.replace(${destination})</script>` });
+              return;
+            }
+          }
+          // Chromium does not route later hops, including after fulfill. A trusted
+          // first hop can therefore redirect a credential-bearing request out.
+          // Fail closed rather than attempting to replay browser redirects.
+          if (request.isNavigationRequest()) blockedRedirect = true;
+          else {
+            try { blockedResourceOrigins.add(new URL(location, request.url()).origin); }
+            catch { /* malformed locations are blocked too */ }
+          }
+          await route.abort('blockedbyclient');
+          return;
+        }
+        await route.fulfill({ response });
         return;
       }
       if (request.isNavigationRequest()) {
@@ -194,34 +252,68 @@ async function openBrowser(platform, storageState, options, operation) {
         await route.abort('blockedbyclient');
         return;
       }
-      if (protectedSecrets) {
-        blockedResourceOrigins.add(origin);
-        await route.abort('blockedbyclient');
-        return;
+      blockedResourceOrigins.add(origin);
+      await route.abort('blockedbyclient');
+    };
+    await context.route('**/*', async (route) => {
+      try {
+        await handleRoute(route);
+      } catch {
+        // Network and teardown failures in event callbacks must never escape as
+        // unhandled rejections or expose request bodies/headers in process logs.
+        if (!closing && route.request().isNavigationRequest()) navigationRequestFailed = true;
+        await route.abort('failed').catch(() => {});
       }
-      await route.continue();
     });
-    const allowedHosts = new Set(platform.allowedOrigins.map((origin) => new URL(origin).host));
     await context.routeWebSocket(() => true, async (ws) => {
-      const host = new URL(ws.url()).host;
-      if (allowedHosts.has(host)) {
+      const socket = new URL(ws.url());
+      const protocol = socket.protocol === 'ws:' ? 'http:' : socket.protocol === 'wss:' ? 'https:' : null;
+      const origin = protocol ? `${protocol}//${socket.host}` : null;
+      if (origin && platform.allowedOrigins.includes(origin)) {
         ws.connectToServer();
         return;
       }
       await ws.close({ code: 1008, reason: 'blocked outside allowed origins' });
     });
-    const guard = { protectSecrets: () => { protectedSecrets = true; } };
+    const guard = {
+      protectSecrets: () => { protectedSecrets = true; },
+      async openInitial(url) {
+        for (let hop = 0; hop <= 10; hop += 1) {
+          initialNavigationUrl = url;
+          initialRedirectUrl = undefined;
+          try {
+            await gotoWithRetry(page, url);
+          } finally {
+            initialNavigationUrl = undefined;
+          }
+          if (!initialRedirectUrl) return;
+          url = initialRedirectUrl;
+        }
+        throw new Error('initial navigation exceeded redirect limit');
+      }
+    };
     try {
       const result = await operation(page, context, guard);
       if (options.loginDiagnostics && result.status === 'failed') result.blockedResourceOrigins = [...blockedResourceOrigins].sort();
       if (blockedOrigin) throw new Error(`request blocked outside allowed origins: ${blockedOrigin}`);
+      if (blockedRedirect) throw new Error('redirect blocked: redirect chains cannot be safely origin-checked');
+      if (navigationRequestFailed) throw new Error('navigation request failed');
       return result;
     } catch (error) {
       if (blockedOrigin) throw new Error(`request blocked outside allowed origins: ${blockedOrigin}`);
+      if (blockedRedirect) throw new Error('redirect blocked: redirect chains cannot be safely origin-checked');
+      if (navigationRequestFailed) throw new Error('navigation request failed');
       throw error;
     }
   } finally {
-    await browser.close();
+    closing = true;
+    try {
+      // Do not wait for stalled analytics requests. Suppress only callbacks
+      // still in flight during teardown, not errors in the business operation.
+      if (context) await context.unrouteAll({ behavior: 'ignoreErrors' });
+    } finally {
+      await browser.close();
+    }
   }
 }
 
@@ -269,15 +361,20 @@ export async function runSignin(platformValue, options) {
   let stage = 'load_session';
   let releaseLock;
   try {
-    releaseLock = await store.acquireLock(platform.id);
-    const pending = await store.findActiveCheckpoint(platform.id);
-    if (pending) {
-      return failure(platform, 'challenge_pending', `A challenge is already pending until ${pending.expiresAt}.`, options);
+    if (!options.probeOnly) {
+      releaseLock = await store.acquireLock(platform.id);
+      const pending = await store.findActiveCheckpoint(platform.id);
+      if (pending) {
+        return failure(platform, 'challenge_pending', `A challenge is already pending until ${pending.expiresAt}.`, options);
+      }
     }
     const session = await store.loadSession(platform.id);
+    if (!session && (options.sessionOnly || options.probeOnly)) {
+      return { status: 'needs_input', platform: platform.id, code: 'session_missing', message: 'No saved session; sign in interactively first.' };
+    }
     return await openBrowser(platform, session, options, async (page, context, guard) => {
       stage = 'open_start_url';
-      await gotoWithRetry(page, platform.startUrl);
+      await guard.openInitial(platform.startUrl);
       await settle(page);
       assertAllowedOrigin(platform, page.url());
 
@@ -289,7 +386,16 @@ export async function runSignin(platformValue, options) {
         return failure(platform, 'session_unknown', 'Neither valid nor invalid session evidence matched.', options);
       }
       if (classification === 'valid') {
+        if (options.probeOnly) {
+          const evidence = await matchingEvidence(page, platform.signin.alreadyWhen);
+          return { status: 'valid', platform: platform.id, checkin: evidence ? 'already_done' : 'unverified',
+            ...(evidence ? { evidence } : {}) };
+        }
+        guard.protectSecrets();
         return performSignin(page, context, platform, store, options);
+      }
+      if (options.sessionOnly || options.probeOnly) {
+        return { status: 'needs_input', platform: platform.id, code: 'session_expired', message: 'Saved session is no longer accepted; sign in interactively again.' };
       }
       if (!platform.login) {
         return failure(platform, 'session_expired', 'Session is invalid and no login flow is configured.', options);

@@ -8,7 +8,8 @@ const usage = {
   usage: [
     'node scripts/auto-signin.mjs check --all',
     'node scripts/auto-signin.mjs check --platform platforms/example.json',
-    'node scripts/auto-signin.mjs run --platform <id|path> [--state-dir <path>] [--headed]',
+    'node scripts/auto-signin.mjs run --platform <id|path> [--state-dir <path>] [--headed] [--session-only]',
+    'node scripts/auto-signin.mjs probe --platform <id|path> [--state-dir <path>] [--headed]',
     'node scripts/auto-signin.mjs resume --platform <id|path> --run-id <id> [--state-dir <path>]  # answer on stdin'
   ],
   note: 'Headless is the default. Challenge answers are accepted only from stdin and are never stored.'
@@ -26,6 +27,7 @@ async function main() {
     const options = {
       store,
       headless: parsed.headless,
+      sessionOnly: parsed.sessionOnly,
       interactive: process.env.AUTO_SIGNIN_NONINTERACTIVE !== '1',
       loginDiagnostics: process.env.AUTO_SIGNIN_LOGIN_DIAGNOSTICS === '1',
       executablePath: process.env.AUTO_SIGNIN_BROWSER_PATH || undefined,
@@ -33,6 +35,7 @@ async function main() {
       readAnswer: () => readChallengeAnswer()
     };
     if (parsed.command === 'run') return await runSignin(platform, options);
+    if (parsed.command === 'probe') return await runSignin(platform, { ...options, probeOnly: true, env: {} });
 
     const answer = await readChallengeAnswer();
     return await resumeSignin(platform, parsed.runId, answer, options);

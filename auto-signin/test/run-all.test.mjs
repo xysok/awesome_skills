@@ -44,12 +44,12 @@ test('formats a three-column report without inventing missing rewards', () => {
     '| 平台 | 状态 | 备注 |',
     '|---|---|---|',
     '| CordCloud | 成功 | 今日已签到；奖励未捕获 |',
-    '| 京东 | 成功 | +2 京豆 |',
+    '| 京东 | 成功 | 签到成功；奖励未捕获 |',
     '| 淘宝 | 失败 | session_expired：Session expired. |'
   ].join('\n'));
 });
 
-test('formats structured rewards before legacy evidence parsing', () => {
+test('formats structured rewards without legacy evidence parsing', () => {
   const report = formatReport([{
     platform: 'wps',
     name: 'WPS',
@@ -63,6 +63,34 @@ test('formats structured rewards before legacy evidence parsing', () => {
 
   assert.match(report, /\| WPS \| 成功 \| \+98 MB、\+1 积分 \|/);
   assert.doesNotMatch(report, /奖励未捕获/);
+});
+
+test('does not turn Taobao task copy into a sign-in reward', () => {
+  const report = formatReport([{ platform: 'taobao', status: 'already_done', evidence: '今日任务 +100' }], 'today');
+  assert.match(report, /今日已签到；奖励未捕获/);
+  assert.doesNotMatch(report, /100/);
+});
+
+test('session-only bypasses credential and binding files', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'signin-session-only-'));
+  const cliPath = join(stateDir, 'fake.mjs');
+  await writeFile(join(stateDir, 'credentials.json'), '{invalid');
+  await writeFile(join(stateDir, 'vault-bindings.json'), '{invalid');
+  await writeFile(cliPath, 'console.log(JSON.stringify({status:process.argv.includes("--session-only") ? "already_done" : "failed"}))');
+  assert.equal((await executePlatform({id:'jd'}, {stateDir, cliPath, sessionOnly:true})).status, 'already_done');
+});
+
+test('executor rejects per-call vault account overrides', async () => {
+  await assert.rejects(executePlatform({ id: 'jd' }, { vaultHandle: 'vault_fixture' }), /override.*not supported/i);
+});
+
+test('daily report requests session-only for every platform', async () => {
+  const seen = [];
+  await buildDailyReport({ execute: async (platform, options) => {
+    seen.push([platform.id, options?.sessionOnly]);
+    return { status: 'needs_input', code: 'session_missing' };
+  } });
+  assert.deepEqual(seen, ['cordcloud', 'jd', 'taobao', 'wps'].map(id => [id, true]));
 });
 
 test('continues with later platforms when one execution throws', async () => {
@@ -90,20 +118,45 @@ test('continues with later platforms when one execution throws', async () => {
   assert.equal(results[2].status, 'already_done');
 });
 
-test('uses headed mode for CordCloud CAPTCHA recovery only', async () => {
+test('uses headed mode by default for every real platform', async () => {
   const root = await mkdtemp(join(tmpdir(), 'auto-signin-headed-'));
   const fixture = join(root, 'fixture.mjs');
   await writeFile(fixture, `
     process.stdout.write(JSON.stringify({ headed: process.argv.includes('--headed') }));
   `);
 
-  const result = await executePlatform({ id: 'cordcloud', name: 'CordCloud' }, {
-    cliPath: fixture,
-    stateDir: root,
-    timeoutMs: 1000
-  });
+  for (const id of ['cordcloud', 'jd', 'taobao', 'wps']) {
+    const result = await executePlatform({ id }, {cliPath: fixture, stateDir: root, timeoutMs: 1000});
+    assert.equal(result.headed, true, id);
+  }
+});
 
+test('honors an explicit headed request for other platforms', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'auto-signin-headed-request-'));
+  const fixture = join(root, 'fixture.mjs');
+  await writeFile(fixture, `process.stdout.write(JSON.stringify({ headed: process.argv.includes('--headed') }));`);
+  const result = await executePlatform({ id: 'jd' }, {
+    cliPath: fixture, stateDir: root, headed: true, timeoutMs: 1000
+  });
   assert.equal(result.headed, true);
+});
+
+test('passes X11 authority to the child while filtering unrelated secrets', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'auto-signin-xauth-'));
+  const fixture = join(root, 'fixture.mjs');
+  await writeFile(fixture, `process.stdout.write(JSON.stringify({ authority: process.env.XAUTHORITY ?? null, secret: process.env.OTHER_SECRET ?? null }));`);
+  const result = await executePlatform({ id: 'jd' }, {
+    cliPath: fixture, stateDir: root, baseEnv: { XAUTHORITY: '/fixture/Xauthority', OTHER_SECRET: 'secret' }, timeoutMs: 1000
+  });
+  assert.deepEqual(result, { authority: '/fixture/Xauthority', secret: null });
+});
+
+test('runner always invokes child in noninteractive mode', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'auto-signin-noninteractive-'));
+  const fixture = join(root, 'fixture.mjs');
+  await writeFile(fixture, `process.stdout.write(JSON.stringify({ mode: process.env.AUTO_SIGNIN_NONINTERACTIVE ?? null }));`);
+  const result = await executePlatform({ id: 'jd' }, { cliPath: fixture, stateDir: root, timeoutMs: 1000 });
+  assert.equal(result.mode, '1');
 });
 
 test('preserves structured CLI failure from a nonzero child exit', async () => {
