@@ -1,0 +1,4 @@
+PyMuPDF==1.28.2
+python-dotenv==1.2.4
+tencentcloud-sdk-python-tmt==3.1.129
+alibabacloud-alimt20181012==1.5.2
